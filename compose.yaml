@@ -1,0 +1,67 @@
+name: rn-live
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: rn
+      POSTGRES_PASSWORD: rn_local_pilot
+      POSTGRES_DB: rn_live
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U rn -d rn_live"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment: &backend-env
+      RN_DATABASE_URL: postgresql+psycopg://rn:rn_local_pilot@db/rn_live
+      RN_STORAGE_DIR: /data/media
+      RN_HF_TOKEN: ${RN_HF_TOKEN:-}
+      RN_WHISPER_MODEL: ${RN_WHISPER_MODEL:-small}
+      RN_WHISPER_DEVICE: cpu
+      RN_WHISPER_COMPUTE_TYPE: int8
+      HF_HOME: /models
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/free}
+      OPENROUTER_FREE_ONLY: ${OPENROUTER_FREE_ONLY:-true}
+      OPENROUTER_TIMEOUT_SECONDS: ${OPENROUTER_TIMEOUT_SECONDS:-45}
+      OPENROUTER_HTTP_REFERER: ${OPENROUTER_HTTP_REFERER:-}
+      OPENROUTER_APP_TITLE: ${OPENROUTER_APP_TITLE:-RN-live}
+    volumes: &backend-volumes
+      - media:/data
+      - models:/models
+    depends_on:
+      db: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        INSTALL_AUDIO: ${RN_INSTALL_AUDIO:-false}
+        INSTALL_TRANSCRIPTION: "true"
+    command: [python, -m, rn_live.worker]
+    environment: *backend-env
+    volumes: *backend-volumes
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports: ["127.0.0.1:8080:80"]
+    depends_on:
+      api: {condition: service_healthy}
+volumes:
+  postgres:
+  media:
+  models:

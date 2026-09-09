@@ -1,0 +1,11 @@
+.git
+.venv
+.uv-cache
+.uv-python
+.superdesign
+.env
+data
+**/node_modules
+**/dist
+**/__pycache__
+.pytest_cache
