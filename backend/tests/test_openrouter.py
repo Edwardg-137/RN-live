@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -19,6 +21,50 @@ def test_free_model_sends_chat_completion_and_returns_text():
     result = client.complete([{"role":"user","content":"Hola"}])
     assert result.text == "Respuesta de prueba"
     assert result.model == "openrouter/free"
+
+
+def test_empty_completion_reports_provider_metadata_without_response_content():
+    response = httpx.Response(
+        200,
+        json={
+            "model": "free/reasoning-model",
+            "choices": [{"finish_reason": "length", "message": {"content": "", "reasoning": "private"}}],
+            "usage": {"completion_tokens": 1200},
+        },
+    )
+    client = OpenRouterClient(Settings(openrouter_api_key="test-key"), transport=transport(response))
+
+    with pytest.raises(OpenRouterError) as error:
+        client.complete([{"role": "user", "content": "Hola"}])
+
+    assert "free/reasoning-model" in str(error.value)
+    assert "length" in str(error.value)
+    assert "1200" in str(error.value)
+    assert "private" not in str(error.value)
+
+
+def test_structured_output_requirements_are_forwarded_to_free_router():
+    def handler(request):
+        body = json.loads(request.content)
+        assert body["response_format"] == {
+            "type": "json_schema",
+            "json_schema": {"name": "claims", "strict": True, "schema": {"type": "object"}},
+        }
+        assert body["provider"] == {"require_parameters": True}
+        assert body["reasoning"] == {"max_tokens": 512, "exclude": True}
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    client = OpenRouterClient(
+        Settings(openrouter_api_key="test-key"), transport=httpx.MockTransport(handler)
+    )
+    client.complete(
+        [{"role": "user", "content": "Hola"}],
+        response_format={
+            "type": "json_schema",
+            "json_schema": {"name": "claims", "strict": True, "schema": {"type": "object"}},
+        },
+        reasoning={"max_tokens": 512, "exclude": True},
+    )
 
 
 def test_settings_accept_openrouter_environment_names(monkeypatch):

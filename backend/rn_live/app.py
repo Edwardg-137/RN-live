@@ -9,15 +9,52 @@ from fastapi.responses import FileResponse
 from sqlalchemy import delete, select, update
 
 from .config import Settings
-from .db import Base, Job, Recording, database, uid
+from .db import AnalysisRun, Claim, ClaimSegment, Job, Recording, database, initialize_database, mark_claims_stale, now, uid
 from .media import MediaError, probe
 from .openrouter import OpenRouterClient
-from .schemas import SegmentReview, SpeakerReview
+from .schemas import ClaimSelection, ClaimUpdate, SegmentReview, SpeakerReview
 from .limits import BodyLimit
 
 
 def describe(recording):
     return {name: getattr(recording, name) for name in ("id", "title", "kind", "speaker_count", "content_date", "scope", "filename", "duration_ms", "status", "error", "revision", "speakers", "created_at")}
+
+
+def describe_run(run, claims=None):
+    value = {name: getattr(run, name) for name in ("id", "recording_id", "recording_revision", "kind", "status", "provider", "model", "prompt_version", "usage", "error", "unreviewed_segment_count", "created_at", "completed_at")}
+    if claims is not None:
+        value["claims"] = claims
+    return value
+
+
+def describe_claim(session, claim):
+    links = [
+        {
+            "segment_id": link.segment_id,
+            "start_ms": link.start_ms,
+            "end_ms": link.end_ms,
+            "speaker_id": link.speaker_id,
+            "speaker_name": link.speaker_name,
+            "position": link.position,
+        }
+        for link in session.scalars(
+            select(ClaimSegment).where(ClaimSegment.claim_id == claim.id).order_by(ClaimSegment.position)
+        )
+    ]
+    return {
+        "id": claim.id,
+        "status": claim.status,
+        "revision": claim.revision,
+        "normalized_text": claim.normalized_text,
+        "original_quote": claim.original_quote,
+        "category": claim.category,
+        "verifiable": claim.verifiable,
+        "start_ms": claim.start_ms,
+        "end_ms": claim.end_ms,
+        "ambiguity_notes": claim.ambiguity_notes,
+        "missing_context": claim.missing_context,
+        "segments": links,
+    }
 
 
 def create_app(settings=None):
@@ -29,7 +66,7 @@ def create_app(settings=None):
 
     @asynccontextmanager
     async def lifespan(_):
-        Base.metadata.create_all(engine)
+        initialize_database(engine)
         yield
         app.state.openrouter.close()
         engine.dispose()
@@ -150,6 +187,7 @@ def create_app(settings=None):
             changed = session.execute(update(Recording).where(Recording.id == item.id, Recording.revision == body.revision).values(segments=values, revision=body.revision + 1, status="ready_for_review"))
             if changed.rowcount != 1:
                 raise HTTPException(409, "La grabación ha cambiado")
+            mark_claims_stale(session, item.id)
             return {"revision": body.revision + 1, "segments": values}
 
     @app.put("/api/recordings/{recording_id}/speakers")
@@ -168,6 +206,7 @@ def create_app(settings=None):
             changed = session.execute(update(Recording).where(Recording.id == item.id, Recording.revision == body.revision).values(speakers=values, revision=body.revision+1))
             if changed.rowcount != 1:
                 raise HTTPException(409, "La grabación ha cambiado")
+            mark_claims_stale(session, item.id)
             return {"revision": body.revision+1, "speakers": values}
 
     @app.post("/api/recordings/{recording_id}/transcribe", status_code=202)
@@ -182,6 +221,157 @@ def create_app(settings=None):
                 job.status, job.token, job.lease_until, job.attempts = "queued", None, None, 0
             item.status, item.error = "queued", None
             return describe(item)
+
+    @app.post("/api/recordings/{recording_id}/claim-extraction", status_code=202)
+    def claim_extraction(recording_id: UUID):
+        with sessions.begin() as session:
+            item = get(session, recording_id, lock=True)
+            if item.status in ("queued", "transcribing"):
+                raise HTTPException(409, "Espera a que termine la transcripción")
+            if not item.segments:
+                raise HTTPException(409, "La grabación aún no tiene transcript revisable")
+            active = session.scalar(select(AnalysisRun).where(AnalysisRun.recording_id == item.id, AnalysisRun.status.in_(("queued", "running"))))
+            if active:
+                return describe_run(active)
+            run = AnalysisRun(
+                recording_id=item.id,
+                recording_revision=item.revision,
+                kind="claim_extraction",
+                provider="openrouter",
+                unreviewed_segment_count=sum(not bool(segment.get("reviewed")) for segment in item.segments),
+            )
+            session.add(run)
+            session.flush()
+            return describe_run(run)
+
+    @app.get("/api/recordings/{recording_id}/claim-extraction")
+    def claim_extraction_status(recording_id: UUID):
+        with sessions() as session:
+            item = get(session, recording_id)
+            run = session.scalar(select(AnalysisRun).where(AnalysisRun.recording_id == item.id).order_by(AnalysisRun.created_at.desc()))
+            if not run:
+                raise HTTPException(404, "No hay análisis de afirmaciones")
+            claims = []
+            for claim in session.scalars(select(Claim).where(Claim.analysis_run_id == run.id).order_by(Claim.position)):
+                claims.append(describe_claim(session, claim))
+            return describe_run(run, claims if run.status in ("completed", "stale") else None)
+
+    @app.post("/api/recordings/{recording_id}/claim-extraction/cancel")
+    def cancel_claim_extraction(recording_id: UUID):
+        with sessions.begin() as session:
+            item = get(session, recording_id, lock=True)
+            run = session.scalar(
+                select(AnalysisRun)
+                .where(AnalysisRun.recording_id == item.id, AnalysisRun.status.in_(("queued", "running")))
+                .order_by(AnalysisRun.created_at.desc())
+                .with_for_update()
+            )
+            if run is None:
+                raise HTTPException(409, "No hay una extracción activa que cancelar")
+            run.status = "cancelled"
+            run.completed_at = now()
+            run.token = None
+            run.lease_until = None
+            return describe_run(run)
+
+    @app.get("/api/recordings/{recording_id}/claims")
+    def list_claims(recording_id: UUID, run_id: UUID | None = None):
+        with sessions() as session:
+            item = get(session, recording_id)
+            statement = select(AnalysisRun).where(AnalysisRun.recording_id == item.id)
+            if run_id is not None:
+                statement = statement.where(AnalysisRun.id == str(run_id))
+            run = session.scalar(statement.order_by(AnalysisRun.created_at.desc()))
+            if run is None:
+                raise HTTPException(404, "Ejecución de afirmaciones no encontrada")
+            rows = session.scalars(
+                select(Claim).where(Claim.analysis_run_id == run.id).order_by(Claim.position, Claim.start_ms)
+            )
+            return [describe_claim(session, claim) for claim in rows]
+
+    def claim_context(session, claim_id, lock=False):
+        claim = session.get(Claim, str(claim_id))
+        if claim is None:
+            raise HTTPException(404, "Afirmación no encontrada")
+        run = session.get(AnalysisRun, claim.analysis_run_id)
+        recording = session.scalar(select(Recording).where(Recording.id == run.recording_id).with_for_update())
+        if recording is None:
+            raise HTTPException(404, "Grabación no encontrada")
+        if lock:
+            run = session.scalar(select(AnalysisRun).where(AnalysisRun.id == run.id).with_for_update())
+            claim = session.scalar(select(Claim).where(Claim.id == claim.id).with_for_update())
+            if run is None or claim is None:
+                raise HTTPException(404, "Afirmación no encontrada")
+        if run.status == "stale" or claim.status == "stale" or recording.revision != run.recording_revision:
+            raise HTTPException(409, "La afirmación pertenece a una revisión desactualizada")
+        return claim, run, recording
+
+    @app.put("/api/claims/{claim_id}")
+    def edit_claim(claim_id: UUID, body: ClaimUpdate):
+        with sessions.begin() as session:
+            claim, _, recording = claim_context(session, claim_id, lock=True)
+            if claim.revision != body.revision:
+                raise HTTPException(409, "Hay una versión más reciente de la afirmación")
+            by_id = {str(segment.get("id")): segment for segment in recording.segments or []}
+            missing = [segment_id for segment_id in body.segment_ids if segment_id not in by_id]
+            if missing:
+                raise HTTPException(422, f"Segmento desconocido: {missing[0]}")
+            linked = [by_id[segment_id] for segment_id in body.segment_ids]
+            speaker_names = {str(speaker["id"]): speaker.get("name") or None for speaker in recording.speakers or []}
+            changed = session.execute(
+                update(Claim)
+                .where(Claim.id == claim.id, Claim.revision == body.revision)
+                .values(
+                    normalized_text=body.normalized_text,
+                    category=body.category,
+                    start_ms=min(int(segment["start_ms"]) for segment in linked),
+                    end_ms=max(int(segment["end_ms"]) for segment in linked),
+                    status="edited",
+                    revision=body.revision + 1,
+                )
+            )
+            if changed.rowcount != 1:
+                raise HTTPException(409, "Hay una versión más reciente de la afirmación")
+            session.execute(delete(ClaimSegment).where(ClaimSegment.claim_id == claim.id))
+            for position, segment in enumerate(linked):
+                speaker_id = segment.get("speaker_id")
+                session.add(
+                    ClaimSegment(
+                        claim_id=claim.id,
+                        segment_id=str(segment["id"]),
+                        start_ms=int(segment["start_ms"]),
+                        end_ms=int(segment["end_ms"]),
+                        speaker_id=speaker_id,
+                        speaker_name=speaker_names.get(str(speaker_id)) if speaker_id else None,
+                        position=position,
+                    )
+                )
+            session.refresh(claim)
+            session.flush()
+            return describe_claim(session, claim)
+
+    def select_claim(claim_id, body, status):
+        with sessions.begin() as session:
+            claim, _, _ = claim_context(session, claim_id, lock=True)
+            if claim.revision != body.revision:
+                raise HTTPException(409, "Hay una versión más reciente de la afirmación")
+            changed = session.execute(
+                update(Claim)
+                .where(Claim.id == claim.id, Claim.revision == body.revision)
+                .values(status=status, revision=body.revision + 1)
+            )
+            if changed.rowcount != 1:
+                raise HTTPException(409, "Hay una versión más reciente de la afirmación")
+            session.refresh(claim)
+            return describe_claim(session, claim)
+
+    @app.post("/api/claims/{claim_id}/accept")
+    def accept_claim(claim_id: UUID, body: ClaimSelection):
+        return select_claim(claim_id, body, "accepted")
+
+    @app.post("/api/claims/{claim_id}/discard")
+    def discard_claim(claim_id: UUID, body: ClaimSelection):
+        return select_claim(claim_id, body, "discarded")
 
     @app.post("/api/recordings/{recording_id}/cancel")
     def cancel(recording_id: UUID):

@@ -6,7 +6,7 @@ from datetime import timedelta
 from sqlalchemy import and_, or_, select, update
 
 from .config import Settings
-from .db import Base, Job, Recording, database, now, uid
+from .db import Job, Recording, database, initialize_database, mark_claims_stale, now, uid
 from .schemas import Segment, Speaker
 from .transcription import process_audio
 
@@ -70,6 +70,7 @@ def run_once(settings, processor=process_audio):
                 item = session.scalar(select(Recording).where(Recording.id == recording_id).with_for_update())
                 result = session.execute(update(Job).where(Job.id == job_id, Job.token == token, Job.status == "running").values(status="completed", token=None, lease_until=None))
                 if result.rowcount == 1 and item:
+                    mark_claims_stale(session, item.id)
                     item.speakers, item.segments = speakers, normalized
                     item.status, item.error = "ready_for_review", None
                     item.revision += 1
@@ -95,11 +96,14 @@ def main():
     settings = Settings()
     settings.storage_dir.mkdir(parents=True, exist_ok=True)
     engine, _ = database(settings.database_url)
-    Base.metadata.create_all(engine)
+    initialize_database(engine)
     engine.dispose()
     while True:
         try:
-            if not run_once(settings):
+            did_transcription = run_once(settings)
+            from .claims_worker import run_claim_once
+            did_claim = run_claim_once(settings)
+            if not did_transcription and not did_claim:
                 time.sleep(2)
         except Exception:
             log.error("Error de infraestructura; se reintentará en cinco segundos")

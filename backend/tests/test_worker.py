@@ -86,3 +86,26 @@ def test_token_is_not_written_to_error_or_logs(client, caplog):
     run_once(settings, processor=failure)
     assert settings.hf_token not in caplog.text
     assert settings.hf_token not in client.get(base).json()['error']
+
+
+def test_new_transcription_marks_completed_claims_stale(client):
+    from rn_live.db import AnalysisRun, Claim
+    from rn_live.worker import run_once
+
+    item = upload(client).json()
+    base = f'/api/recordings/{item["id"]}'
+    client.put(base + "/segments", json={"revision": 0, "segments": [{"id": "old", "start_ms": 0, "end_ms": 1000, "text": "Texto anterior"}]})
+    with client.app.state.sessions.begin() as session:
+        run = AnalysisRun(recording_id=item["id"], recording_revision=1, status="completed")
+        session.add(run)
+        session.flush()
+        session.add(Claim(analysis_run_id=run.id, normalized_text="Texto anterior", original_quote="Texto anterior", category="fact", verifiable=True, start_ms=0, end_ms=1000))
+
+    assert client.post(base + "/transcribe").status_code == 202
+    assert run_once(
+        client.app.state.settings,
+        processor=lambda *args: ([], [{"start_ms": 100, "end_ms": 900, "text": "Texto nuevo", "speaker_id": None}]),
+    )
+    result = client.get(base + "/claim-extraction").json()
+    assert result["status"] == "stale"
+    assert result["claims"][0]["status"] == "stale"

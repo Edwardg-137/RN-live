@@ -2555,6 +2555,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic-settings" },
     { name = "python-multipart" },
@@ -2568,7 +2569,6 @@ audio = [
     { name = "pyannote-audio" },
 ]
 dev = [
-    { name = "httpx" },
     { name = "pytest" },
 ]
 transcription = [
@@ -2580,7 +2580,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "faster-whisper", marker = "extra == 'audio'", specifier = ">=1.1,<2" },
     { name = "faster-whisper", marker = "extra == 'transcription'", specifier = ">=1.1,<2" },
-    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28,<1" },
+    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
     { name = "pyannote-audio", marker = "extra == 'audio'", specifier = ">=4,<5" },
     { name = "pydantic-settings", specifier = ">=2.8,<3" },

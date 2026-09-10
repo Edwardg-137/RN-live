@@ -43,7 +43,15 @@ class OpenRouterClient:
             raise OpenRouterConfigurationError("El modo gratuito solo permite openrouter/free o modelos :free")
         return model
 
-    def complete(self, messages: list[dict[str, str]], *, max_tokens: int = 800, temperature: float = 0.1) -> Completion:
+    def complete(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        max_tokens: int = 800,
+        temperature: float = 0.1,
+        response_format: dict[str, Any] | None = None,
+        reasoning: dict[str, Any] | None = None,
+    ) -> Completion:
         model = self._validate()
         if not messages or any(message.get("role") not in {"system", "user", "assistant"} or not message.get("content", "").strip() for message in messages):
             raise OpenRouterConfigurationError("Los mensajes deben tener role y content válidos")
@@ -53,10 +61,21 @@ class OpenRouterClient:
         if self.settings.openrouter_app_title:
             headers["X-OpenRouter-Title"] = self.settings.openrouter_app_title
         try:
+            body: dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            }
+            if response_format is not None:
+                body["response_format"] = response_format
+                body["provider"] = {"require_parameters": True}
+            if reasoning is not None:
+                body["reasoning"] = reasoning
             response = self._client.post(
                 "/chat/completions",
                 headers=headers,
-                json={"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": temperature},
+                json=body,
             )
         except httpx.HTTPError as exc:
             raise OpenRouterError("No se pudo conectar con OpenRouter") from exc
@@ -70,9 +89,16 @@ class OpenRouterClient:
             raise OpenRouterError(f"OpenRouter respondió HTTP {response.status_code}{suffix}")
         try:
             payload = response.json()
-            text = payload["choices"][0]["message"]["content"]
-            if not isinstance(text, str) or not text.strip():
-                raise ValueError("empty content")
-            return Completion(text=text, model=payload.get("model", model), usage=payload.get("usage"))
+            choice = payload["choices"][0]
+            text = choice["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise OpenRouterError("OpenRouter devolvió una respuesta sin contenido utilizable") from exc
+        if not isinstance(text, str) or not text.strip():
+            provider_model = str(payload.get("model") or model)[:160]
+            finish_reason = str(choice.get("finish_reason") or "desconocida")[:80]
+            completion_tokens = (payload.get("usage") or {}).get("completion_tokens", "desconocidos")
+            raise OpenRouterError(
+                "OpenRouter devolvió contenido vacío "
+                f"(modelo={provider_model}, finalización={finish_reason}, tokens_salida={completion_tokens})"
+            )
+        return Completion(text=text, model=payload.get("model", model), usage=payload.get("usage"))
