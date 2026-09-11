@@ -13,6 +13,11 @@ const run: ClaimRun = {
     category: 'fact', verifiable: true, start_ms: 61000, end_ms: 63000,
     ambiguity_notes: ['“grande” requiere una comparación'], missing_context: ['Magnitud concreta'],
     segments: [{segment_id: 's1', start_ms: 61000, end_ms: 63000, speaker_id: 'a', speaker_name: 'Ana', position: 0}],
+  }, {
+    id: 'claim-2', status: 'proposed', revision: 0, normalized_text: 'Saturno tiene anillos.', original_quote: 'Saturno tiene anillos',
+    category: 'fact', verifiable: true, start_ms: 64000, end_ms: 66000,
+    ambiguity_notes: [], missing_context: [],
+    segments: [{segment_id: 's1', start_ms: 64000, end_ms: 66000, speaker_id: 'a', speaker_name: 'Ana', position: 0}],
   }],
 }
 
@@ -46,5 +51,15 @@ describe('panel de afirmaciones', () => {
     const html = renderToStaticMarkup(createElement(ClaimsPanel, {...props, run: {...run, status: 'stale'}}))
     expect(html).toContain('desactualizada')
     expect(html).toContain('Júpiter es grande.')
+  })
+
+  it('expone una lista horizontal con una sola tarjeta activa y navegación accesible', () => {
+    const html = renderToStaticMarkup(createElement(ClaimsPanel, props))
+    expect(html).toContain('aria-label="Carrusel de afirmaciones"')
+    expect(html).toContain('aria-label="Afirmación anterior"')
+    expect(html).toContain('aria-label="Afirmación siguiente"')
+    expect(html).toContain('1 de 2')
+    expect(html).toContain('aria-current="true"')
+    expect(html).toMatch(/Saturno tiene anillos[\s\S]*tabindex="-1"/)
   })
 })

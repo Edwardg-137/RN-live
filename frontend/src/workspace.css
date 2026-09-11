@@ -1,0 +1,74 @@
+.workspace-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.workspace-layout.editor-open { grid-template-columns: minmax(0, 1fr) minmax(360px, 480px); }
+.workspace-main { min-width: 0; }
+
+.save-bar {
+  position: sticky;
+  top: 12px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  border: 1px solid #dfc578;
+  border-radius: 7px;
+  background: #fff7dc;
+  box-shadow: 0 4px 16px #273b3420;
+}
+
+.editor-toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.editor-toggles button { text-align: left; padding: 14px 16px; }
+.editor-toggles span, .editor-toggles small { display: block; }
+.editor-toggles small { color: var(--muted); margin-top: 5px; overflow-wrap: anywhere; }
+.editor-toggles strong { display: block; color: #8a6514; margin-top: 4px; }
+
+.secondary-panel {
+  position: sticky;
+  top: 20px;
+  max-height: calc(100vh - 40px);
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: white;
+}
+
+.secondary-panel > header {
+  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  background: white;
+}
+
+.secondary-panel > header h2, .secondary-panel > header p { margin-bottom: 0; }
+.secondary-panel > header button { font-size: 22px; line-height: 1; padding: 7px 11px; }
+.secondary-scroll { max-height: calc(100vh - 116px); overflow: auto; padding: 20px; }
+.secondary-panel .transcript-panel { border: 0; border-radius: 0; }
+.secondary-panel .transcript-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 20px; }
+.secondary-panel .transcript-scroll { max-height: calc(100vh - 190px); }
+
+@media (min-width: 1600px) { .workspace-layout { gap: 40px; } }
+@media (max-width: 1100px) { .workspace-layout.editor-open { grid-template-columns: minmax(0, 1fr) minmax(340px, 420px); } }
+
+@media (max-width: 650px) {
+  .editor-toggles { grid-template-columns: 1fr; }
+  .save-bar { top: 8px; }
+  .workspace-layout.editor-open { grid-template-columns: minmax(0, 1fr); }
+  .secondary-panel { position: fixed; inset: 0; z-index: 20; max-height: none; border: 0; border-radius: 0; }
+  .secondary-scroll { max-height: calc(100vh - 73px); }
+  .secondary-panel .transcript-scroll { max-height: calc(100vh - 145px); }
+}

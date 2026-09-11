@@ -6,6 +6,7 @@ const claimTools = claimModule as typeof claimModule & {
   filterClaims: (claims: Claim[], status: string, category: string) => Claim[]
   claimSpeakers: (claim: Claim) => string
   claimEditBody: (claim: Claim, normalizedText: string, category: Claim['category'], segmentIds: string[]) => unknown
+  claimIndexAfterChange: (previousIndex: number, count: number) => number
 }
 
 const claims: Claim[] = [
@@ -41,5 +42,11 @@ describe('revisión de afirmaciones', () => {
       category: 'fact',
       segment_ids: ['s2'],
     })
+  })
+
+  it('mantiene la posición activa o usa la anterior cuando desaparece la última candidata', () => {
+    expect(claimTools.claimIndexAfterChange(1, 2)).toBe(1)
+    expect(claimTools.claimIndexAfterChange(2, 2)).toBe(1)
+    expect(claimTools.claimIndexAfterChange(0, 0)).toBe(0)
   })
 })

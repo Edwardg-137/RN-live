@@ -4,6 +4,10 @@ export function filterClaims(claims:Claim[],status:string,category:string){
   return claims.filter(claim=>(status==='all'||claim.status===status)&&(category==='all'||claim.category===category))
 }
 
+export function claimIndexAfterChange(previousIndex:number,count:number){
+  return Math.max(0,Math.min(previousIndex,count-1))
+}
+
 export function claimSpeakers(claim:Claim){
   return [...new Set(claim.segments.map(link=>link.speaker_name).filter((name):name is string=>Boolean(name)))].join(', ')||'Sin determinar'
 }
