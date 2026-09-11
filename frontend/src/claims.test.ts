@@ -13,11 +13,13 @@ const claims: Claim[] = [
   {
     id: 'c1', status: 'proposed', revision: 0, normalized_text: 'Júpiter es grande.', original_quote: 'Júpiter es grande',
     category: 'fact', verifiable: true, start_ms: 0, end_ms: 700, ambiguity_notes: [], missing_context: [],
+    conversation_relation: 'standalone', context_required: false, standalone_text: 'Júpiter es grande.', context_segments: [],
     segments: [{segment_id: 's1', start_ms: 0, end_ms: 700, speaker_id: 'a', speaker_name: 'Ana', position: 0}],
   },
   {
     id: 'c2', status: 'discarded', revision: 3, normalized_text: 'Quizá lleguemos.', original_quote: 'Quizá lleguemos',
     category: 'prediction', verifiable: false, start_ms: 800, end_ms: 1500, ambiguity_notes: ['Fecha imprecisa'], missing_context: ['Destino'],
+    conversation_relation: 'standalone', context_required: false, standalone_text: 'Quizá lleguemos.', context_segments: [],
     segments: [{segment_id: 's2', start_ms: 800, end_ms: 1500, speaker_id: null, speaker_name: null, position: 0}],
   },
 ]
@@ -27,6 +29,13 @@ describe('revisión de afirmaciones', () => {
     expect(claimTools.filterClaims(claims, 'discarded', 'prediction').map(claim => claim.id)).toEqual(['c2'])
     expect(claimTools.filterClaims(claims, 'all', 'fact').map(claim => claim.id)).toEqual(['c1'])
     expect(claimTools.filterClaims(claims, 'proposed', 'all').map(claim => claim.id)).toEqual(['c1'])
+  })
+
+  it('filtra candidatas que requieren auditoría o usan varias fuentes', () => {
+    expect(claimModule.filterClaims(claims, 'all', 'all', 'issues').map(claim=>claim.id)).toEqual(['c2'])
+    expect(claimModule.filterClaims(claims, 'all', 'all', 'multi_segment').map(claim=>claim.id)).toEqual([])
+    const multi={...claims[0],segments:[...claims[0].segments,{...claims[0].segments[0],segment_id:'s3'}]}
+    expect(claimModule.filterClaims([multi], 'all', 'all', 'multi_segment').map(claim=>claim.id)).toEqual(['c1'])
   })
 
   it('presenta los hablantes conservados sin duplicados', () => {

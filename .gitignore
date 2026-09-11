@@ -17,3 +17,4 @@ test-results/
 playwright-report/
 .superdesign/
 .pytest*
+.test*

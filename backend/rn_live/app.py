@@ -36,10 +36,9 @@ def describe_claim(session, claim):
             "speaker_id": link.speaker_id,
             "speaker_name": link.speaker_name,
             "position": link.position,
+            "relation": link.relation,
         }
-        for link in session.scalars(
-            select(ClaimSegment).where(ClaimSegment.claim_id == claim.id).order_by(ClaimSegment.position)
-        )
+        for link in session.scalars(select(ClaimSegment).where(ClaimSegment.claim_id == claim.id).order_by(ClaimSegment.relation.desc(), ClaimSegment.position))
     ]
     return {
         "id": claim.id,
@@ -53,7 +52,11 @@ def describe_claim(session, claim):
         "end_ms": claim.end_ms,
         "ambiguity_notes": claim.ambiguity_notes,
         "missing_context": claim.missing_context,
-        "segments": links,
+        "conversation_relation": claim.conversation_relation,
+        "context_required": claim.context_required,
+        "standalone_text": claim.standalone_text or claim.normalized_text,
+        "segments": [link for link in links if link["relation"] == "source"],
+        "context_segments": [link for link in links if link["relation"] == "context"],
     }
 
 
@@ -238,6 +241,7 @@ def create_app(settings=None):
                 recording_revision=item.revision,
                 kind="claim_extraction",
                 provider="openrouter",
+                prompt_version="claims-v2-conversation",
                 unreviewed_segment_count=sum(not bool(segment.get("reviewed")) for segment in item.segments),
             )
             session.add(run)
@@ -317,12 +321,16 @@ def create_app(settings=None):
             if missing:
                 raise HTTPException(422, f"Segmento desconocido: {missing[0]}")
             linked = [by_id[segment_id] for segment_id in body.segment_ids]
+            context_ids = set(session.scalars(select(ClaimSegment.segment_id).where(ClaimSegment.claim_id == claim.id, ClaimSegment.relation == "context")))
+            has_remaining_context = bool(context_ids - set(body.segment_ids))
             speaker_names = {str(speaker["id"]): speaker.get("name") or None for speaker in recording.speakers or []}
             changed = session.execute(
                 update(Claim)
                 .where(Claim.id == claim.id, Claim.revision == body.revision)
                 .values(
                     normalized_text=body.normalized_text,
+                    standalone_text=body.normalized_text,
+                    context_required=claim.context_required and has_remaining_context,
                     category=body.category,
                     start_ms=min(int(segment["start_ms"]) for segment in linked),
                     end_ms=max(int(segment["end_ms"]) for segment in linked),
@@ -332,7 +340,12 @@ def create_app(settings=None):
             )
             if changed.rowcount != 1:
                 raise HTTPException(409, "Hay una versión más reciente de la afirmación")
-            session.execute(delete(ClaimSegment).where(ClaimSegment.claim_id == claim.id))
+            session.execute(
+                delete(ClaimSegment).where(
+                    ClaimSegment.claim_id == claim.id,
+                    (ClaimSegment.relation == "source") | ClaimSegment.segment_id.in_(body.segment_ids),
+                )
+            )
             for position, segment in enumerate(linked):
                 speaker_id = segment.get("speaker_id")
                 session.add(
@@ -343,6 +356,7 @@ def create_app(settings=None):
                         end_ms=int(segment["end_ms"]),
                         speaker_id=speaker_id,
                         speaker_name=speaker_names.get(str(speaker_id)) if speaker_id else None,
+                        relation="source",
                         position=position,
                     )
                 )

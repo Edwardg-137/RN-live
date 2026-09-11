@@ -78,6 +78,9 @@ class Claim(Base):
     end_ms: Mapped[int] = mapped_column(Integer)
     ambiguity_notes: Mapped[list] = mapped_column(JSON, default=list)
     missing_context: Mapped[list] = mapped_column(JSON, default=list)
+    conversation_relation: Mapped[str] = mapped_column(String(30), default="standalone")
+    context_required: Mapped[bool] = mapped_column(default=False)
+    standalone_text: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     position: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default="proposed")
     revision: Mapped[int] = mapped_column(Integer, default=0)
@@ -92,6 +95,7 @@ class ClaimSegment(Base):
     end_ms: Mapped[int] = mapped_column(Integer)
     speaker_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     speaker_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    relation: Mapped[str] = mapped_column(String(10), default="source")
     position: Mapped[int] = mapped_column(Integer, default=0)
 
 
@@ -136,8 +140,14 @@ def initialize_database(engine):
         "claims": {
             "status": "VARCHAR(20) NOT NULL DEFAULT 'proposed'",
             "revision": "INTEGER NOT NULL DEFAULT 0",
+            "conversation_relation": "VARCHAR(30) NOT NULL DEFAULT 'standalone'",
+            "context_required": "BOOLEAN NOT NULL DEFAULT FALSE",
+            "standalone_text": "VARCHAR(2000)",
         },
-        "claim_segments": {"speaker_name": "VARCHAR(100)"},
+        "claim_segments": {
+            "speaker_name": "VARCHAR(100)",
+            "relation": "VARCHAR(10) NOT NULL DEFAULT 'source'",
+        },
     }
     inspector = inspect(engine)
     with engine.begin() as connection:

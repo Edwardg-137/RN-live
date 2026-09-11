@@ -1,3 +1,4 @@
+import json
 from datetime import timedelta
 
 from sqlalchemy import func, select
@@ -10,14 +11,16 @@ from test_recordings import upload
 
 class FakeClient:
     def complete(self, messages, **kwargs):
-        return Completion('{"claims":[{"segment_ids":["s1"],"category":"fact","verifiable":true,"normalized_text":"Júpiter es grande.","original_quote":"Júpiter es grande","ambiguity_notes":[],"missing_context":[]}]}', "free-model", {"total_tokens": 20})
+        has_context = "[s0]" in messages[1]["content"]
+        claim = {"segment_ids": ["s1"], "context_segment_ids": ["s0"] if has_context else [], "conversation_relation": "answer" if has_context else "standalone", "context_required": has_context, "standalone_text": "Júpiter es un planeta muy grande.", "category": "fact", "verifiable": True, "normalized_text": "Júpiter es muy grande.", "original_quote": "Júpiter es un planeta muy grande", "ambiguity_notes": [], "missing_context": []}
+        return Completion(json.dumps({"claims": [claim]}), "free-model", {"total_tokens": 20})
 
 
 def test_claim_worker_persists_temporal_links(client):
     item = upload(client).json()
     base = f"/api/recordings/{item['id']}"
     client.put(base + "/speakers", json={"revision": 0, "speakers": [{"id": "a", "name": "Ana"}]})
-    client.put(base + "/segments", json={"revision": 1, "segments": [{"id": "s1", "start_ms": 100, "end_ms": 900, "text": "Júpiter es grande", "speaker_id": "a"}]})
+    client.put(base + "/segments", json={"revision": 1, "segments": [{"id": "s0", "start_ms": 0, "end_ms": 90, "text": "¿Qué tamaño?", "speaker_id": "a"}, {"id": "s1", "start_ms": 100, "end_ms": 900, "text": "Júpiter es un planeta muy grande", "speaker_id": "a"}]})
     run = client.post(base + "/claim-extraction").json()
     settings = client.app.state.settings
     assert run_claim_once(settings, FakeClient()) is True
@@ -25,6 +28,9 @@ def test_claim_worker_persists_temporal_links(client):
     assert result["status"] == "completed"
     assert result["claims"][0]["segments"][0]["segment_id"] == "s1"
     assert result["claims"][0]["segments"][0]["speaker_name"] == "Ana"
+    assert result["claims"][0]["context_segments"][0]["segment_id"] == "s0"
+    assert result["claims"][0]["conversation_relation"] == "answer"
+    assert result["claims"][0]["standalone_text"] == "Júpiter es un planeta muy grande."
     assert result["claims"][0]["start_ms"] == 100
     engine, sessions = database(settings.database_url)
     try:
@@ -40,7 +46,7 @@ def test_claim_worker_persists_temporal_links(client):
 def test_claim_worker_recovers_an_expired_running_lease(client):
     item = upload(client).json()
     base = f"/api/recordings/{item['id']}"
-    client.put(base + "/segments", json={"revision": 0, "segments": [{"id": "s1", "start_ms": 100, "end_ms": 900, "text": "Júpiter es grande"}]})
+    client.put(base + "/segments", json={"revision": 0, "segments": [{"id": "s1", "start_ms": 100, "end_ms": 900, "text": "Júpiter es un planeta grande"}]})
     run_id = client.post(base + "/claim-extraction").json()["id"]
     settings = client.app.state.settings
     engine, sessions = database(settings.database_url)
@@ -71,7 +77,7 @@ def test_claim_worker_recovers_an_expired_running_lease(client):
 def test_claim_worker_does_not_publish_after_cancellation(client):
     item = upload(client).json()
     base = f"/api/recordings/{item['id']}"
-    client.put(base + "/segments", json={"revision": 0, "segments": [{"id": "s1", "start_ms": 100, "end_ms": 900, "text": "Júpiter es grande"}]})
+    client.put(base + "/segments", json={"revision": 0, "segments": [{"id": "s1", "start_ms": 100, "end_ms": 900, "text": "Júpiter es un planeta grande"}]})
     run_id = client.post(base + "/claim-extraction").json()["id"]
     settings = client.app.state.settings
 
@@ -100,7 +106,7 @@ def test_claim_worker_does_not_publish_after_cancellation(client):
 def test_claim_worker_marks_run_stale_when_recording_revision_changes(client):
     item = upload(client).json()
     base = f"/api/recordings/{item['id']}"
-    client.put(base + "/segments", json={"revision": 0, "segments": [{"id": "s1", "start_ms": 100, "end_ms": 900, "text": "Júpiter es grande"}]})
+    client.put(base + "/segments", json={"revision": 0, "segments": [{"id": "s1", "start_ms": 100, "end_ms": 900, "text": "Júpiter es un planeta grande"}]})
     run_id = client.post(base + "/claim-extraction").json()["id"]
     settings = client.app.state.settings
 
@@ -128,7 +134,7 @@ def test_claim_worker_marks_run_stale_when_recording_revision_changes(client):
 def test_claim_worker_hides_openrouter_key_and_records_completion_time(client, caplog):
     item = upload(client).json()
     base = f"/api/recordings/{item['id']}"
-    client.put(base + "/segments", json={"revision": 0, "segments": [{"id": "s1", "start_ms": 100, "end_ms": 900, "text": "Dato"}]})
+    client.put(base + "/segments", json={"revision": 0, "segments": [{"id": "s1", "start_ms": 100, "end_ms": 900, "text": "Este es un dato verificable"}]})
     client.post(base + "/claim-extraction")
     settings = client.app.state.settings
     settings.openrouter_api_key = "claim-secret-key"

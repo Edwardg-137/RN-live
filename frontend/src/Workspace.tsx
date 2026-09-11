@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, json } from './api'
-import { ClaimsPanel } from './ClaimsPanel'
+import { categoryLabels, ClaimsPanel } from './ClaimsPanel'
+import { buildExport, canDownloadTranscript, downloadJson, exportFilename } from './export'
+import { filterSegments, transcriptSummary, type SegmentAudit } from './inspection'
 import { activeSegments, formatTime, splitSegment } from './timeline'
-import { kinds, statuses, type Recording, type Segment, type Speaker, type Transcript, type Snapshot, type Claim, type ClaimCategory, type ClaimRun } from './types'
+import { kinds, statuses, type Recording, type Segment, type Speaker, type Transcript, type Snapshot, type Claim, type ClaimCategory, type ClaimDraftState, type ClaimRun } from './types'
 import './workspace.css'
 
 export function Workspace({id,onChange,onDeleted,onDirty}:{id:string;onChange:()=>void;onDeleted:()=>void;onDirty:(dirty:boolean)=>void}) {
@@ -18,6 +20,8 @@ export function Workspace({id,onChange,onDeleted,onDirty}:{id:string;onChange:()
   const [follow,setFollow] = useState(true)
   const [claimRun,setClaimRun] = useState<ClaimRun|null>(null)
   const [claimDirty,setClaimDirty] = useState(false)
+  const [claimDraft,setClaimDraft] = useState<ClaimDraftState|null>(null)
+  const [segmentAudit,setSegmentAudit] = useState<SegmentAudit>('all')
   const [editor,setEditor] = useState<'speakers'|'transcript'|null>(null)
   const player = useRef<HTMLVideoElement>(null)
   const speakerButton = useRef<HTMLButtonElement>(null)
@@ -29,6 +33,9 @@ export function Workspace({id,onChange,onDeleted,onDirty}:{id:string;onChange:()
   const dirty = speakerDirty||transcriptDirty
   const active = activeSegments(transcript.segments,time)
   const activeKey = active.join(',')
+  const summary = transcriptSummary(transcript.segments,speakers,claimRun?.claims||[])
+  const visibleSegments = filterSegments(transcript.segments,segmentAudit)
+  const canExport = Boolean(record&&canDownloadTranscript(record.status,transcript.segments))
 
   async function load() {
     const item = await api<Snapshot>(path)
@@ -58,18 +65,25 @@ export function Workspace({id,onChange,onDeleted,onDirty}:{id:string;onChange:()
   async function cancelClaims(){setBusy(true);setError('');try{setClaimRun(await api<ClaimRun>(path+'/claim-extraction/cancel',{method:'POST'}))}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
   async function editClaim(claim:Claim,normalizedText:string,category:ClaimCategory,segmentIds:string[]){setBusy(true);setError('');try{replaceClaim(await api<Claim>(`/claims/${claim.id}`,json('PUT',{revision:claim.revision,normalized_text:normalizedText,category,segment_ids:segmentIds})))}catch(e){setError((e as Error).message);throw e}finally{setBusy(false)}}
   async function selectClaim(claim:Claim,action:'accept'|'discard'){setBusy(true);setError('');try{replaceClaim(await api<Claim>(`/claims/${claim.id}/${action}`,json('POST',{revision:claim.revision})))}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
+  function exportVisible(){
+    if(!record||!canExport)return
+    if(!window.confirm('El JSON contiene la transcripción completa y se guardará en este dispositivo. ¿Descargar?'))return
+    const value=buildExport({recording:record,speakers,transcript,analysis:claimRun,containsUnsavedChanges:dirty||claimDirty,analysisIsStale:dirty||claimRun?.status==='stale',claimDraft,exportedAt:new Date().toISOString()})
+    downloadJson(value,exportFilename(record.title,transcript.revision))
+  }
   if(!record)return <section className="panel"><p role={error?'alert':'status'}>{error||'Cargando grabación…'}</p></section>
 
   return <>
     <header className="workspace-header"><div><p className="eyebrow">{kinds[record.kind]} · {formatTime(record.duration_ms)}</p><h1>{record.title}</h1></div><span className="badge">{statuses[record.status]||record.status}</span></header>
-    <div className="toolbar"><button disabled={busy||processing||dirty} onClick={()=>{if(transcript.segments.length&&!window.confirm('Volver a transcribir reemplazará la revisión cuando termine. ¿Continuar?'))return;void action('transcribe')}}>Transcribir</button>{processing&&<button disabled={busy} onClick={()=>void action('cancel')}>Cancelar trabajo</button>}<button className="danger" disabled={busy} onClick={()=>void remove()}>Eliminar</button></div>
+    <div className="toolbar"><button disabled={busy||processing||dirty} onClick={()=>{if(transcript.segments.length&&!window.confirm('Volver a transcribir reemplazará la revisión cuando termine. ¿Continuar?'))return;void action('transcribe')}}>Transcribir</button>{processing&&<button disabled={busy} onClick={()=>void action('cancel')}>Cancelar trabajo</button>}<button disabled={!canExport} title={canExport?undefined:'Transcribe la grabación antes de descargar el JSON.'} onClick={exportVisible}>Descargar JSON</button><button className="danger" disabled={busy} onClick={()=>void remove()}>Eliminar</button></div>
     {(error||record.error)&&<p className="error" role="alert">{error||record.error}</p>}{notice&&<p role="status" className="notice">{notice}</p>}
     {dirty&&<div className="save-bar" role="status"><strong>Cambios sin guardar</strong><button className="primary" disabled={busy||processing} onClick={()=>void save()}>{busy?'Guardando…':'Guardar revisión'}</button></div>}
     <div className={`workspace-layout ${editor?'editor-open':''}`}>
       <section className="workspace-main">
         <video ref={player} controls preload="metadata" src={`/api${path}/media`} onTimeUpdate={e=>setTime(e.currentTarget.currentTime)} onError={()=>setError('No se pudo reproducir el archivo. Comprueba el formato y la conexión.')} className={record.filename.toLowerCase().endsWith('.mp4')?'':'audio-player'}/>
         <div className="player-caption"><span>{formatTime(time*1000)} / {formatTime(record.duration_ms)}</span><label className="inline">Velocidad<select aria-label="Velocidad de reproducción" defaultValue="1" onChange={e=>{if(player.current)player.current.playbackRate=Number(e.target.value)}}>{[0.75,1,1.25,1.5,2].map(n=><option key={n} value={n}>{n}×</option>)}</select></label></div>
-        <ClaimsPanel run={claimRun} segments={transcript.segments} busy={busy||processing||dirty} onStart={()=>void extractClaims()} onCancel={()=>void cancelClaims()} onSeek={milliseconds=>{if(player.current){player.current.currentTime=milliseconds/1000;setTime(player.current.currentTime)}}} onEdit={editClaim} onSelect={selectClaim} onDraftDirty={setClaimDirty}/>
+        <ClaimsPanel run={claimRun} segments={transcript.segments} busy={busy||processing||dirty} locallyStale={dirty&&Boolean(claimRun)} onStart={()=>void extractClaims()} onCancel={()=>void cancelClaims()} onSeek={milliseconds=>{if(player.current){player.current.currentTime=milliseconds/1000;setTime(player.current.currentTime)}}} onEdit={editClaim} onSelect={selectClaim} onDraftDirty={setClaimDirty} onDraftChange={setClaimDraft}/>
+        <section className="panel audit-summary" aria-labelledby="audit-title"><div className="panel-heading"><div><p className="eyebrow">INSPECCIÓN</p><h2 id="audit-title">Resumen descriptivo</h2></div><small>No es una puntuación de calidad</small></div><dl><div><dt>Segmentos</dt><dd>{summary.segments_total}</dd></div><div><dt>Revisados</dt><dd>{summary.segments_reviewed}</dd></div><div><dt>Breves</dt><dd>{summary.short_segments}</dd></div><div><dt>Sin hablante</dt><dd>{summary.segments_without_speaker}</dd></div><div><dt>Solapamientos</dt><dd>{summary.overlaps}</dd></div><div><dt>Inválidos</dt><dd>{summary.invalid_segments}</dd></div></dl>{summary.duration_by_speaker.length>0&&<p className="audit-detail"><strong>Duración por hablante:</strong> {summary.duration_by_speaker.map(item=>`${item.speaker_name} ${formatTime(item.duration_ms)}`).join(' · ')}</p>}{claimRun?.claims&&<><p className="audit-detail"><strong>Categorías:</strong> {Object.entries(summary.claims_by_category).map(([category,count])=>`${categoryLabels[category as ClaimCategory]} ${count}`).join(' · ')||'0'}</p><p className="audit-detail"><strong>Estados:</strong> {Object.entries(summary.claims_by_status).map(([status,count])=>`${status} ${count}`).join(' · ')||'0'}</p></>}</section>
         <div className="editor-toggles">
           <button ref={speakerButton} aria-expanded={editor==='speakers'} aria-controls="secondary-editor" onClick={()=>setEditor(value=>value==='speakers'?null:'speakers')}><span>{editor==='speakers'?'▾':'▸'} Identificar hablantes · {speakers.length} detectado{speakers.length===1?'':'s'}</span><small>{speakers.map((speaker,index)=>speaker.name||`Hablante ${index+1}`).join(', ')||'Sin hablantes asignados'}{speakerDirty&&<strong>Cambios pendientes</strong>}</small></button>
           <button ref={transcriptButton} aria-expanded={editor==='transcript'} aria-controls="secondary-editor" onClick={()=>setEditor(value=>value==='transcript'?null:'transcript')}><span>{editor==='transcript'?'▾':'▸'} Editar transcripción · {transcript.segments.length} segmentos</span><small>{transcript.segments.filter(segment=>!segment.reviewed).length} sin revisión manual{transcriptDirty&&<strong>Cambios pendientes</strong>}</small></button>
@@ -77,9 +91,10 @@ export function Workspace({id,onChange,onDeleted,onDirty}:{id:string;onChange:()
       </section>
       <aside id="secondary-editor" className="secondary-panel" hidden={!editor} aria-labelledby="secondary-title"><header><div><p className="eyebrow">EDITOR</p><h2 id="secondary-title">{editor==='speakers'?'Quién habla':'Transcripción'}</h2></div><button aria-label="Cerrar editor" onClick={closeEditor}>×</button></header>
       {editor==='speakers'?<div className="secondary-scroll"><p className="muted">{speakers.length} detectado{speakers.length===1?'':'s'}. Asigna nombres y roles a las voces.</p><fieldset disabled={busy||processing}>{speakers.map((speaker,i)=><div className="speaker-row" key={speaker.id}><label>Hablante {i+1}<input value={speaker.name} maxLength={100} placeholder={speaker.id} onChange={e=>{setSpeakers(values=>values.map((v,j)=>j===i?{...v,name:e.target.value}:v));setSpeakerDirty(true)}}/></label><label>Rol<select value={speaker.role} onChange={e=>{setSpeakers(values=>values.map((v,j)=>j===i?{...v,role:e.target.value as Speaker['role']}:v));setSpeakerDirty(true)}}>{Object.entries({unspecified:'Sin especificar',speaker:'Orador',moderator:'Moderador',interviewer:'Entrevistador',guest:'Invitado'}).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label></div>)}<button disabled={speakers.length>=4} onClick={()=>{setSpeakers([...speakers,{id:crypto.randomUUID(),name:'',role:'unspecified'}]);setSpeakerDirty(true)}}>Añadir hablante</button></fieldset></div>:
-      <div className="transcript-panel"><div className="transcript-header"><span>{transcript.segments.length} segmentos</span><label className="inline"><input type="checkbox" checked={follow} onChange={e=>setFollow(e.target.checked)}/>Seguir reproducción</label></div>
+      <div className="transcript-panel"><div className="transcript-header"><span>{transcript.segments.length} segmentos</span><label className="inline">Auditar<select value={segmentAudit} onChange={e=>setSegmentAudit(e.target.value as SegmentAudit)}><option value="all">Todos</option><option value="short">Solo breves</option><option value="unreviewed">Solo sin revisión</option><option value="no_speaker">Solo sin hablante</option></select></label><label className="inline"><input type="checkbox" checked={follow} onChange={e=>setFollow(e.target.checked)}/>Seguir reproducción</label></div>
         <div className="transcript-scroll">{!transcript.segments.length&&<p className="empty">{processing?'Procesando la grabación. Puedes volver más tarde.':'Solicita la transcripción o añade segmentos manualmente para revisar el contenido.'}</p>}
-          {transcript.segments.map((segment,index)=><article ref={node=>{rows.current[index]=node}} key={segment.id??`new-${index}`} className={`segment ${active.includes(index)?'active':''}`}>
+          {transcript.segments.length>0&&!visibleSegments.length&&<p className="empty">No hay segmentos para este filtro.</p>}
+          {visibleSegments.map(({segment,index})=><article ref={node=>{rows.current[index]=node}} key={segment.id??`new-${index}`} className={`segment ${active.includes(index)?'active':''}`}>
             <div className="segment-heading"><button className="time-link" onClick={()=>{if(player.current){player.current.currentTime=Math.max(0,segment.start_ms/1000-2);setTime(player.current.currentTime)}}}>{formatTime(segment.start_ms)} ↗</button><span className="muted">{segment.reviewed?'Revisado':'Sin revisión manual'}</span></div>
             <fieldset disabled={busy||processing}>
               <label>Hablante<select value={segment.speaker_id??''} onChange={e=>changeSegment(index,{speaker_id:e.target.value||null})}><option value="">Sin determinar / voces superpuestas</option>{speakers.map((s,i)=><option key={s.id} value={s.id}>{s.name||`Hablante ${i+1}`}</option>)}</select></label>

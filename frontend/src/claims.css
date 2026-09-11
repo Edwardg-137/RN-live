@@ -7,7 +7,7 @@
 
 .panel-heading h2 { margin-bottom: 0; }
 .analysis-meta { justify-content: flex-start; flex-wrap: wrap; color: var(--muted); font-size: 11px; margin: 12px 0; }
-.claim-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+.claim-filters { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 14px; }
 .claim-navigation { justify-content: center; margin: 2px 0 12px; }
 .claim-navigation span { min-width: 65px; text-align: center; color: var(--muted); font-size: 12px; }
 .claim-navigation button { padding: 5px 11px; }
@@ -51,6 +51,11 @@
 .normalized-claim { font-weight: 650; font-size: 15px; margin-bottom: 10px; }
 .claim-details { justify-content: flex-start; color: var(--muted); font-size: 12px; margin-bottom: 12px; }
 .claim-details span + span:before { content: '·'; margin-right: 12px; }
+.claim-context { margin: 10px 0; color: var(--muted); }
+.claim-context summary { cursor: pointer; font-weight: 650; color: var(--text); }
+.claim-context ul { margin-bottom: 0; }
+.claim-context button { padding: 4px 8px; }
+.claim-context li { overflow-wrap: anywhere; }
 .claim-card ul { margin: 5px 0 12px; padding-left: 20px; }
 .claim-actions { justify-content: flex-start; flex-wrap: wrap; margin-top: 14px; }
 .claim-segment-option { display: flex; align-items: flex-start; gap: 8px; font-weight: 400; padding: 6px 0; margin: 0; }

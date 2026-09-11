@@ -22,6 +22,7 @@ def test_claim_extraction_run_is_queued_and_is_revision_bound(client):
     run = response.json()
     assert run["status"] == "queued"
     assert run["recording_revision"] == 2
+    assert run["prompt_version"] == "claims-v2-conversation"
     status = client.get(f"/api/recordings/{recording_id}/claim-extraction")
     assert status.status_code == 200
     assert status.json()["id"] == run["id"]
@@ -57,6 +58,33 @@ def test_claim_candidates_expose_selection_status_and_revision(client):
     claim = response.json()["claims"][0]
     assert claim["status"] == "proposed"
     assert claim["revision"] == 0
+    assert claim["conversation_relation"] == "standalone"
+    assert claim["standalone_text"] == "Júpiter es grande."
+    assert claim["context_segments"] == []
+
+
+def test_claim_candidates_expose_context_separately_from_source_segments(client):
+    recording_id, _, claim_id = claim_fixture(client)
+    with client.app.state.sessions.begin() as session:
+        claim = session.get(Claim, claim_id)
+        claim.conversation_relation = "answer"
+        claim.context_required = True
+        claim.standalone_text = "Ana afirmó que Júpiter es grande."
+        session.add(ClaimSegment(claim_id=claim.id, segment_id="s2", start_ms=800, end_ms=1500, speaker_id="b", speaker_name="Beto", relation="context", position=0))
+
+    claim = client.get(f"/api/recordings/{recording_id}/claims").json()[0]
+
+    assert [link["segment_id"] for link in claim["segments"]] == ["s1"]
+    assert [link["segment_id"] for link in claim["context_segments"]] == ["s2"]
+    assert (claim["start_ms"], claim["end_ms"]) == (0, 700)
+
+    edited = client.put(
+        f"/api/claims/{claim_id}",
+        json={"revision": 0, "normalized_text": "Júpiter tiene lunas.", "category": "fact", "segment_ids": ["s2"]},
+    ).json()
+    assert [link["segment_id"] for link in edited["segments"]] == ["s2"]
+    assert edited["context_segments"] == []
+    assert edited["context_required"] is False
 
 
 def test_claim_extraction_can_be_cancelled(client):

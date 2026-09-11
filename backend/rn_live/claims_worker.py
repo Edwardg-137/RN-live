@@ -174,6 +174,9 @@ def run_claim_once(settings: Settings, client=None) -> bool:
                         end_ms=extracted.end_ms,
                         ambiguity_notes=extracted.ambiguity_notes,
                         missing_context=extracted.missing_context,
+                        conversation_relation=extracted.conversation_relation,
+                        context_required=extracted.context_required,
+                        standalone_text=extracted.standalone_text,
                         position=position,
                     )
                     session.add(row)
@@ -189,6 +192,22 @@ def run_claim_once(settings: Settings, client=None) -> bool:
                                 end_ms=int(segment["end_ms"]),
                                 speaker_id=speaker_id,
                                 speaker_name=speaker_names.get(str(speaker_id)) if speaker_id else None,
+                                relation="source",
+                                position=segment_position,
+                            )
+                        )
+                    for segment_position, segment_id in enumerate(extracted.context_segment_ids):
+                        segment = by_id[segment_id]
+                        speaker_id = segment.get("speaker_id")
+                        session.add(
+                            ClaimSegment(
+                                claim_id=row.id,
+                                segment_id=segment_id,
+                                start_ms=int(segment["start_ms"]),
+                                end_ms=int(segment["end_ms"]),
+                                speaker_id=speaker_id,
+                                speaker_name=speaker_names.get(str(speaker_id)) if speaker_id else None,
+                                relation="context",
                                 position=segment_position,
                             )
                         )

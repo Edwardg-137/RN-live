@@ -29,6 +29,11 @@
 .editor-toggles span, .editor-toggles small { display: block; }
 .editor-toggles small { color: var(--muted); margin-top: 5px; overflow-wrap: anywhere; }
 .editor-toggles strong { display: block; color: #8a6514; margin-top: 4px; }
+.audit-summary dl { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin: 16px 0; }
+.audit-summary dl div { min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
+.audit-summary dt { color: var(--muted); font-size: 11px; }
+.audit-summary dd { margin: 2px 0 0; font-size: 18px; font-weight: 700; }
+.audit-detail { margin-bottom: 6px; overflow-wrap: anywhere; }
 
 .secondary-panel {
   position: sticky;
@@ -58,7 +63,7 @@
 .secondary-panel > header button { font-size: 22px; line-height: 1; padding: 7px 11px; }
 .secondary-scroll { max-height: calc(100vh - 116px); overflow: auto; padding: 20px; }
 .secondary-panel .transcript-panel { border: 0; border-radius: 0; }
-.secondary-panel .transcript-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 20px; }
+.secondary-panel .transcript-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 20px; flex-wrap: wrap; }
 .secondary-panel .transcript-scroll { max-height: calc(100vh - 190px); }
 
 @media (min-width: 1600px) { .workspace-layout { gap: 40px; } }
@@ -67,6 +72,7 @@
 @media (max-width: 650px) {
   .editor-toggles { grid-template-columns: 1fr; }
   .save-bar { top: 8px; }
+  .audit-summary dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .workspace-layout.editor-open { grid-template-columns: minmax(0, 1fr); }
   .secondary-panel { position: fixed; inset: 0; z-index: 20; max-height: none; border: 0; border-radius: 0; }
   .secondary-scroll { max-height: calc(100vh - 73px); }

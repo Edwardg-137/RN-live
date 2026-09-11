@@ -1,7 +1,11 @@
 import type { Claim, ClaimCategory } from './types'
 
-export function filterClaims(claims:Claim[],status:string,category:string){
-  return claims.filter(claim=>(status==='all'||claim.status===status)&&(category==='all'||claim.category===category))
+export function filterClaims(claims:Claim[],status:string,category:string,audit='all'){
+  return claims.filter(claim=>(status==='all'||claim.status===status)&&(category==='all'||claim.category===category)&&(
+    audit==='all'||
+    (audit==='issues'&&(claim.ambiguity_notes.length>0||claim.missing_context.length>0))||
+    (audit==='multi_segment'&&claim.segments.length>1)
+  ))
 }
 
 export function claimIndexAfterChange(previousIndex:number,count:number){
